@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cronómetro Parlante</title>
+    
+    <!-- PWA Tags -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#1f2937">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              'mgs': ['"Share Tech Mono"', 'monospace'],
+            },
+          },
+        },
+      }
+    </script>
+    
+    <!-- React y ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel para transpilar JSX en el navegador -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useEffect, useCallback, useRef } = React;
+
+      // HOOK: useStopwatch
+      const useStopwatch = () => {
+        const [time, setTime] = useState(0);
+        const [isRunning, setIsRunning] = useState(false);
+        const intervalRef = useRef(null);
+        const startTimeRef = useRef(0);
+
+        const start = useCallback(() => {
+          if (isRunning) return;
+          setIsRunning(true);
+          startTimeRef.current = Date.now() - time;
+          intervalRef.current = window.setInterval(() => {
+            setTime(Date.now() - startTimeRef.current);
+          }, 10);
+        }, [isRunning, time]);
+
+        const pause = useCallback(() => {
+          if (!isRunning) return;
+          setIsRunning(false);
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+        }, [isRunning]);
+
+        const reset = useCallback(() => {
+          setIsRunning(false);
+          setTime(0);
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+        }, []);
+
+        useEffect(() => {
+          return () => {
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+            }
+          };
+        }, []);
+
+        return { time, isRunning, start, pause, reset };
+      };
+
+      // HOOK: useTextToSpeech
+      const useTextToSpeech = (langCode, theme) => {
+        const [voice, setVoice] = useState(null);
+        const [isSupported, setIsSupported] = useState(false);
+
+        useEffect(() => {
+          if ('speechSynthesis' in window) {
+            setIsSupported(true);
+          } else {
+            console.warn('La API de Síntesis de Voz no es soportada en este navegador.');
+            return;
+          }
+
+          const loadVoices = () => {
+            const availableVoices = window.speechSynthesis.getVoices();
+            if (availableVoices.length === 0) return;
+
+            const specificVoices = availableVoices.filter(v => v.lang === langCode);
+            if (specificVoices.length > 0) {
+              setVoice(specificVoices[specificVoices.length - 1]);
+              return;
+            }
+
+            const fallbackVoices = availableVoices.filter(v => v.lang.startsWith(langCode.split('-')[0]));
+            if (fallbackVoices.length > 0) {
+              setVoice(fallbackVoices[fallbackVoices.length - 1]);
+            } else {
+              setVoice(null);
+            }
+          };
+
+          loadVoices();
+          window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+          return () => {
+            window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
+          };
+        }, [langCode]);
+
+        const speak = useCallback((text) => {
+          if (!isSupported || !voice || !text) return;
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.voice = voice;
+          utterance.lang = voice.lang;
+          
+          if (theme === 'metal_gear') {
+              utterance.pitch = 0.5;
+              utterance.rate = 1.0;
+          } else {
+              utterance.pitch = 1;
+              utterance.rate = 1.1;
+          }
+          utterance.volume = 1;
+          window.speechSynthesis.speak(utterance);
+        }, [voice, isSupported, theme]);
+
+        const cancelSpeech = useCallback(() => {
+          if(isSupported) {
+              window.speechSynthesis.cancel();
+          }
+        }, [isSupported]);
+
+        return { speak, cancelSpeech, isReady: !!voice };
+      };
+
+      // COMPONENT: StopwatchDisplay
+      const StopwatchDisplay = ({ time, theme, fontClass }) => {
+        const formatTime = (timeInMillis) => {
+          const minutes = Math.floor((timeInMillis / 60000) % 60).toString().padStart(2, '0');
+          const seconds = Math.floor((timeInMillis / 1000) % 60).toString().padStart(2, '0');
+          const centiseconds = Math.floor((timeInMillis / 10) % 100).toString().padStart(2, '0');
+          return `${minutes}:${seconds}.${centiseconds}`;
+        };
+
+        return (
+          <div className={`text-8xl md:text-9xl tracking-wider w-full text-center py-4 rounded-lg shadow-inner ${theme.displayBg} ${theme.displayTextColor} ${fontClass}`}>
+            {formatTime(time)}
+          </div>
+        );
+      };
+
+      // COMPONENT: Controls
+      const Controls = ({ isRunning, hasStarted, onStart, onPause, onReset, startLabel, pauseLabel, resetLabel, theme, onInteraction }) => {
+        const handleStart = () => { onInteraction(); onStart(); };
+        const handlePause = () => { onInteraction(); onPause(); };
+        const handleReset = () => { onInteraction(); onReset(); };
+
+        return (
+          <div className="flex items-center justify-center gap-4 w-full">
+            <button
+              onClick={handleReset}
+              disabled={!hasStarted}
+              className={`px-8 py-4 text-lg font-semibold rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50 disabled:cursor-not-allowed ${theme.resetBg} ${theme.resetText} ${theme.resetHover}`}
+              aria-label={resetLabel}
+            >
+              {resetLabel}
+            </button>
+            {isRunning ? (
+              <button
+                onClick={handlePause}
+                className={`px-8 py-4 text-lg font-semibold rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 w-40 ${theme.pauseBg} ${theme.pauseText} ${theme.pauseHover} ${theme.accentRing}`}
+                aria-label={pauseLabel}
+              >
+                {pauseLabel}
+              </button>
+            ) : (
+              <button
+                onClick={handleStart}
+                className={`px-8 py-4 text-lg font-semibold rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 w-40 ${theme.startBg} ${theme.startText} ${theme.startHover} ${theme.accentRing}`}
+                aria-label={startLabel}
+              >
+                {startLabel}
+              </button>
+            )}
+          </div>
+        );
+      };
+
+      // MAIN APP COMPONENT
+      const App = () => {
+        // Data and State... (Copied from App.tsx)
+        const languages = { 'es-ES': 'Castellano', 'en-US': 'English', 'de-DE': 'Deutsch', 'de-CH': 'Schweizerdeutsch', 'fr-FR': 'Français', 'ru-RU': 'Русский', 'pt-BR': 'Português', 'gl-ES': 'Galego' };
+        const translations = {
+          'es-ES': { title: 'Cronómetro Parlante', subtitle: 'Un cronómetro que te habla.', footer: 'Diseñado para una experiencia auditiva y visual clara.', start: 'Iniciar', pause: 'Pausar', reset: 'Reiniciar', languageLabel: 'Idioma:', themeLabel: 'Tema:' },
+          'en-US': { title: 'Talking Stopwatch', subtitle: 'A stopwatch that talks to you.', footer: 'Designed for a clear audio and visual experience.', start: 'Start', pause: 'Pause', reset: 'Reset', languageLabel: 'Language:', themeLabel: 'Theme:' },
+          'de-DE': { title: 'Sprechende Stoppuhr', subtitle: 'Eine Stoppuhr, die mit Ihnen spricht.', footer: 'Entwickelt für ein klares audiovisuelles Erlebnis.', start: 'Start', pause: 'Pause', reset: 'Zurücksetzen', languageLabel: 'Sprache:', themeLabel: 'Thema:' },
+          'de-CH': { title: 'Sprechende Stoppuhr', subtitle: 'Eine Stoppuhr, die mit Ihnen spricht.', footer: 'Entwickelt für ein klares audiovisuelles Erlebnis.', start: 'Start', pause: 'Pause', reset: 'Zurücksetzen', languageLabel: 'Sprache:', themeLabel: 'Thema:' },
+          'fr-FR': { title: 'Chronomètre Parlant', subtitle: 'Un chronomètre qui vous parle.', footer: 'Conçu pour une expérience audio et visuelle claire.', start: 'Démarrer', pause: 'Pause', reset: 'Réinitialiser', languageLabel: 'Langue:', themeLabel: 'Thème:' },
+          'ru-RU': { title: 'Говорящий Секундомер', subtitle: 'Секундомер, который говорит с вами.', footer: 'Разработано для четкого звукового и визуального восприятия.', start: 'Старт', pause: 'Пауза', reset: 'Сброс', languageLabel: 'Язык:', themeLabel: 'Тема:' },
+          'pt-BR': { title: 'Cronômetro Falante', subtitle: 'Um cronômetro que fala com você.', footer: 'Projetado para uma experiência de áudio e visual clara.', start: 'Iniciar', pause: 'Pausar', reset: 'Reiniciar', languageLabel: 'Idioma:', themeLabel: 'Tema:' },
+          'gl-ES': { title: 'Cronómetro Falante', subtitle: 'Un cronómetro que che fala.', footer: 'Deseñado para unha experiencia auditiva e visual clara.', start: 'Iniciar', pause: 'Pausar', reset: 'Reiniciar', languageLabel: 'Idioma:', themeLabel: 'Tema:' },
+        };
+        const themes = {
+          cyberpunk: { name: 'Cyberpunk', font: 'font-mono', bg: 'bg-gray-900', mainBg: 'bg-gray-800', textColor: 'text-white', subtleText: 'text-gray-400', accent: 'text-cyan-400', accentRing: 'focus:ring-cyan-400', selectBg: 'bg-gray-700', selectBorder: 'border-gray-600', displayBg: 'bg-gray-900', displayTextColor: 'text-gray-100', startBg: 'bg-green-500', startHover: 'hover:bg-green-600', startText: 'text-white', pauseBg: 'bg-red-500', pauseHover: 'hover:bg-red-600', pauseText: 'text-white', resetBg: 'bg-gray-600', resetHover: 'hover:bg-gray-700', resetText: 'text-white' },
+          bosque: { name: 'Bosque', font: 'font-mono', bg: 'bg-green-900', mainBg: 'bg-green-800', textColor: 'text-yellow-100', subtleText: 'text-green-200', accent: 'text-yellow-300', accentRing: 'focus:ring-yellow-300', selectBg: 'bg-green-700', selectBorder: 'border-green-600', displayBg: 'bg-green-900', displayTextColor: 'text-yellow-100', startBg: 'bg-yellow-500', startHover: 'hover:bg-yellow-600', startText: 'text-green-900', pauseBg: 'bg-orange-500', pauseHover: 'hover:bg-orange-600', pauseText: 'text-white', resetBg: 'bg-green-600', resetHover: 'hover:bg-green-700', resetText: 'text-yellow-100' },
+          oceano: { name: 'Océano', font: 'font-mono', bg: 'bg-blue-900', mainBg: 'bg-blue-800', textColor: 'text-blue-100', subtleText: 'text-blue-300', accent: 'text-cyan-300', accentRing: 'focus:ring-cyan-300', selectBg: 'bg-blue-700', selectBorder: 'border-blue-600', displayBg: 'bg-blue-900', displayTextColor: 'text-blue-100', startBg: 'bg-cyan-500', startHover: 'hover:bg-cyan-600', startText: 'text-white', pauseBg: 'bg-teal-500', pauseHover: 'hover:bg-teal-600', pauseText: 'text-white', resetBg: 'bg-blue-600', resetHover: 'hover:bg-blue-700', resetText: 'text-blue-100' },
+          atardecer: { name: 'Atardecer', font: 'font-mono', bg: 'bg-orange-900', mainBg: 'bg-orange-800', textColor: 'text-yellow-200', subtleText: 'text-orange-300', accent: 'text-red-400', accentRing: 'focus:ring-red-400', selectBg: 'bg-orange-700', selectBorder: 'border-orange-600', displayBg: 'bg-orange-900', displayTextColor: 'text-yellow-200', startBg: 'bg-red-500', startHover: 'hover:bg-red-600', startText: 'text-white', pauseBg: 'bg-yellow-500', pauseHover: 'hover:bg-yellow-600', pauseText: 'text-orange-900', resetBg: 'bg-orange-600', resetHover: 'hover:bg-orange-700', resetText: 'text-yellow-200' },
+          monocromo: { name: 'Monocromo', font: 'font-mono', bg: 'bg-gray-100', mainBg: 'bg-white', textColor: 'text-gray-800', subtleText: 'text-gray-500', accent: 'text-black', accentRing: 'focus:ring-gray-800', selectBg: 'bg-gray-200', selectBorder: 'border-gray-300', displayBg: 'bg-gray-200', displayTextColor: 'text-black', startBg: 'bg-black', startHover: 'hover:bg-gray-800', startText: 'text-white', pauseBg: 'bg-gray-700', pauseHover: 'hover:bg-gray-600', pauseText: 'text-white', resetBg: 'bg-gray-300', resetHover: 'hover:bg-gray-400', resetText: 'text-black' },
+          metal_gear: { name: 'Metal Gear', font: 'font-mgs', backgroundImage: 'url(https://i.imgur.com/7I1p2fi.jpeg)', bg: 'bg-transparent', mainBg: 'bg-slate-900/70 backdrop-blur-sm', textColor: 'text-green-300', subtleText: 'text-green-300/70', accent: 'text-green-400', accentRing: 'focus:ring-green-400', selectBg: 'bg-slate-800/80', selectBorder: 'border-green-500/50', displayBg: 'bg-black/50', displayTextColor: 'text-green-300', startBg: 'bg-green-700/80', startHover: 'hover:bg-green-600/90', startText: 'text-green-100', pauseBg: 'bg-red-700/80', pauseHover: 'hover:bg-red-600/90', pauseText: 'text-red-100', resetBg: 'bg-slate-700/80', resetHover: 'hover:bg-slate-600/90', resetText: 'text-slate-100' },
+          espana: { name: 'España', font: 'font-mono', backgroundImage: 'url(https://images.alphacoders.com/132/1323389.jpeg)', bg: 'bg-transparent', mainBg: 'bg-white/70 backdrop-blur-md', textColor: 'text-black', subtleText: 'text-red-900', accent: 'text-red-700', accentRing: 'focus:ring-red-700', selectBg: 'bg-white/80', selectBorder: 'border-yellow-500', displayBg: 'bg-red-700/80', displayTextColor: 'text-yellow-300', startBg: 'bg-red-600', startHover: 'hover:bg-red-700', startText: 'text-white', pauseBg: 'bg-yellow-500', pauseHover: 'hover:bg-yellow-600', pauseText: 'text-red-900', resetBg: 'bg-red-900', resetHover: 'hover:bg-red-800', resetText: 'text-yellow-300' },
+        };
+
+        const [lang, setLang] = useState('es-ES');
+        const [theme, setTheme] = useState('cyberpunk');
+        const { time, isRunning, start, pause, reset } = useStopwatch();
+        const { speak, cancelSpeech, isReady } = useTextToSpeech(lang, theme);
+        const lastSecond = useRef(-1);
+        const musicAudioRef = useRef(null);
+        const soundAudioRef = useRef(null);
+        const codecAudioRef = useRef(null);
+
+        const currentTheme = themes[theme] || themes.cyberpunk;
+        const t = translations[lang] || translations['es-ES'];
+
+        useEffect(() => {
+          document.body.className = `${currentTheme.bg} transition-colors duration-500`;
+          document.body.style.backgroundImage = currentTheme.backgroundImage || 'none';
+          document.body.style.backgroundSize = 'cover';
+          document.body.style.backgroundPosition = 'center';
+          document.body.style.backgroundAttachment = 'fixed';
+
+          if (theme === 'metal_gear') {
+            if (!musicAudioRef.current) {
+              musicAudioRef.current = new Audio('https://od.lk/s/NzVfMzI5NjY4NzJf/mgs-main-theme.mp3');
+              musicAudioRef.current.loop = true;
+              musicAudioRef.current.volume = 0.3;
+            }
+            musicAudioRef.current.play().catch(e => console.error("Error playing music:", e));
+          } else {
+            if (musicAudioRef.current) {
+              musicAudioRef.current.pause();
+              musicAudioRef.current.currentTime = 0;
+            }
+          }
+        }, [theme, currentTheme]);
+
+        const playInteractionSound = useCallback(() => {
+          if (theme === 'metal_gear') {
+            if (!soundAudioRef.current) {
+              soundAudioRef.current = new Audio('https://od.lk/s/NzVfMzI5NjY4Njlf/mgs-select.mp3');
+              soundAudioRef.current.volume = 0.7;
+            }
+            soundAudioRef.current.currentTime = 0;
+            soundAudioRef.current.play().catch(e => console.error("Error playing sound:", e));
+          }
+        }, [theme]);
+        
+        const playCodecBeep = useCallback(() => {
+          if (theme === 'metal_gear') {
+              if (!codecAudioRef.current) {
+                  codecAudioRef.current = new Audio('https://od.lk/s/NzVfMzI5NjY4Njdf/mgs-codec.mp3');
+                  codecAudioRef.current.volume = 0.8;
+              }
+              codecAudioRef.current.currentTime = 0;
+              codecAudioRef.current.play().catch(e => console.error("Error playing CODEC sound:", e));
+          }
+        }, [theme]);
+
+        useEffect(() => {
+          if (isRunning && isReady) {
+            const currentSecond = Math.floor(time / 1000);
+            if (currentSecond > lastSecond.current) {
+              lastSecond.current = currentSecond;
+              const skipThreshold = { 'ru-RU': 11, 'de-DE': 11, 'de-CH': 11, 'fr-FR': 13 }[lang] || 21;
+              if (currentSecond > 0 && (currentSecond < skipThreshold || currentSecond % 2 !== 0)) {
+                if (theme === 'metal_gear') {
+                  playCodecBeep();
+                  setTimeout(() => speak(currentSecond.toString()), 200);
+                } else {
+                  speak(currentSecond.toString());
+                }
+              }
+            }
+          } else if (!isRunning) {
+            lastSecond.current = -1;
+            cancelSpeech();
+          }
+        }, [time, isRunning, speak, lang, isReady, cancelSpeech, theme, playCodecBeep]);
+        
+        const handleReset = useCallback(() => { reset(); lastSecond.current = -1; cancelSpeech(); }, [reset, cancelSpeech]);
+        const handleLangChange = (e) => { playInteractionSound(); setLang(e.target.value); cancelSpeech(); };
+        const handleThemeChange = (e) => { playInteractionSound(); setTheme(e.target.value); };
+
+        return (
+          <div className={`flex flex-col items-center justify-center min-h-screen p-4 transition-colors duration-500 ${currentTheme.textColor}`}>
+            <div className={`w-full max-w-2xl mx-auto p-6 md:p-8 rounded-xl shadow-2xl space-y-8 ${currentTheme.mainBg}`}>
+              <header className="text-center">
+                <h1 className={`text-4xl md:text-5xl font-bold ${currentTheme.accent}`}>{t.title}</h1>
+                <p className={`mt-2 text-lg ${currentTheme.subtleText}`}>{t.subtitle}</p>
+              </header>
+              <main className="space-y-8">
+                <StopwatchDisplay time={time} theme={currentTheme} fontClass={currentTheme.font} />
+                <Controls
+                  isRunning={isRunning} hasStarted={time > 0}
+                  onStart={start} onPause={pause} onReset={handleReset}
+                  startLabel={t.start} pauseLabel={t.pause} resetLabel={t.reset}
+                  theme={currentTheme} onInteraction={playInteractionSound}
+                />
+              </main>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-6 pt-4 border-t border-gray-500/30">
+                <div className="flex items-center gap-2">
+                  <label htmlFor="language-select" className={`text-sm font-medium ${currentTheme.subtleText}`}>{t.languageLabel}</label>
+                  <select id="language-select" value={lang} onChange={handleLangChange} className={`rounded-md px-2 py-1 border-2 transition-colors duration-200 focus:outline-none focus:ring-2 ${currentTheme.selectBg} ${currentTheme.selectBorder} ${currentTheme.textColor} ${currentTheme.accentRing}`}>
+                    {Object.entries(languages).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="theme-select" className={`text-sm font-medium ${currentTheme.subtleText}`}>{t.themeLabel}</label>
+                  <select id="theme-select" value={theme} onChange={handleThemeChange} className={`rounded-md px-2 py-1 border-2 transition-colors duration-200 focus:outline-none focus:ring-2 ${currentTheme.selectBg} ${currentTheme.selectBorder} ${currentTheme.textColor} ${currentTheme.accentRing}`}>
+                    {Object.entries(themes).map(([key, themeData]) => <option key={key} value={key}>{themeData.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <footer className="mt-8 text-center">
+              <p className={`text-sm ${currentTheme.subtleText}`}>{t.footer}</p>
+            </footer>
+          </div>
+        );
+      };
+
+      // Iniciar la aplicación
+      const rootElement = document.getElementById('root');
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(<App />);
+
+      // Registrar el Service Worker
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => console.log('Service Worker registrado con éxito:', registration))
+            .catch(error => console.log('Error al registrar el Service Worker:', error));
+        });
+      }
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "name": "Cronómetro Parlante",
+  "description": "Una aplicación de cronómetro simple y estéticamente agradable que lee en voz alta los segundos transcurridos en Castellano (Español de España).",
+  "requestFramePermissions": []
+}
